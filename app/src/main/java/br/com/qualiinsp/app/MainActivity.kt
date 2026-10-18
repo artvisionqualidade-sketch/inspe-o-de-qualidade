@@ -425,11 +425,7 @@ class MainActivity : AppCompatActivity() {
         }
         paintEventButtons()
         addText("Identificação do registro", 16)
-        val code = field("Código / referência do produto")
-        val product = field("Nome do produto")
-        val lot = field("Lote")
         val mold = field("Molde")
-        val operator = field("Operador do turno (nome)")
         button("Salvar estado da máquina") {
             if (selectedEvent.isBlank()) { toast("Selecione um estado para a Máquina $machineNo"); return@button }
             if (selectedEvent == "Não Conforme") {
@@ -437,8 +433,8 @@ class MainActivity : AppCompatActivity() {
             } else {
                 machineStates[machineNo] = selectedEvent
                 val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-                val reason = "Checklist de produção — Máquina $machineNo\nEstado: $selectedEvent\nMolde: ${mold.text}\nOperador: ${operator.text}"
-                store.addInspection(Inspection(now, code.text.toString(), product.text.toString(), if (selectedEvent == "Conforme") Status.OK.name else Status.ATTENTION.name, reason, 0f, lot.text.toString(), "Máquina $machineNo", mold.text.toString(), ""))
+                val reason = "Checklist de produção — Máquina $machineNo\nEstado: $selectedEvent\nMolde: ${mold.text}"
+                store.addInspection(Inspection(now, "", "", if (selectedEvent == "Conforme") Status.OK.name else Status.ATTENTION.name, reason, 0f, "", "Máquina $machineNo", mold.text.toString(), ""))
                 toast("Estado da Máquina $machineNo salvo")
                 showProductionChecklist()
             }
@@ -454,11 +450,7 @@ class MainActivity : AppCompatActivity() {
         checklistPhotoPreview = null
         root = base("Máquina $machineNo • ${if (initialEvent == "Não Conforme") "Não conformidade" else "Checklist"}")
         addText("Estado da máquina: $initialEvent", 16)
-        val code = field("Código / referência do produto")
-        val product = field("Nome do produto")
-        val lot = field("Lote")
         val mold = field("Molde")
-        val operator = field("Operador do turno")
         val selectedDefects = mutableListOf<String>()
         if (initialEvent == "Não Conforme") {
             addText("1ª etapa — registre evidências. A foto do defeito é obrigatória.", 15)
@@ -499,13 +491,27 @@ class MainActivity : AppCompatActivity() {
         root.addView(conditionalRelease, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         val releaseReason = field("Justificativa / limite da liberação condicional")
         val leader = field("Nome do líder ou preparador do turno")
-        addText("Assinatura manuscrita digital do líder/preparador — assinar no quadro abaixo. A assinatura é registrada como evidência do aplicativo; siga também o procedimento formal da empresa.", 13)
-        val signature = SignaturePad(this).apply {
-            layoutParams = LinearLayout.LayoutParams(-1, dp(170))
-            background = rounded(Color.WHITE, 10, Color.rgb(0,145,255))
+        addText("Assinatura manuscrita digital do líder/preparador. Ao tocar no botão, será aberta uma tela exclusiva, branca e ampliada para assinar sem interferência dos outros campos.", 13)
+        var signatureBitmap: Bitmap? = null
+        val signatureStatus = TextView(this).apply {
+            text = "Assinatura ainda não registrada"
+            setTextColor(Color.rgb(255, 205, 90)); textSize = 14f
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = rounded(Color.rgb(13, 19, 30), 10, Color.rgb(35, 70, 105))
         }
-        root.addView(signature, LinearLayout.LayoutParams(-1, dp(170)).apply { bottomMargin = dp(8) })
-        button("Limpar assinatura") { signature.clear() }
+        root.addView(signatureStatus, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        button("✍️ Abrir tela exclusiva de assinatura") {
+            openSignatureScreen { bmp ->
+                signatureBitmap = bmp
+                signatureStatus.text = "✓ Assinatura capturada e pronta para salvar"
+                signatureStatus.setTextColor(Color.rgb(65, 230, 120))
+            }
+        }
+        button("Apagar assinatura registrada") {
+            signatureBitmap = null
+            signatureStatus.text = "Assinatura ainda não registrada"
+            signatureStatus.setTextColor(Color.rgb(255, 205, 90))
+        }
         button("Salvar checklist da Máquina $machineNo") {
             if (initialEvent == "Não Conforme") {
                 if (selectedDefects.isEmpty()) { toast("Marque pelo menos um defeito encontrado"); return@button }
@@ -516,11 +522,10 @@ class MainActivity : AppCompatActivity() {
             if (conditionalRelease.isChecked) {
                 if (initialEvent != "Não Conforme") { toast("Liberação condicional só se aplica a produto não conforme"); return@button }
                 if (leader.text.isBlank() || releaseReason.text.isBlank()) { toast("Informe o líder/preparador e a justificativa da liberação"); return@button }
-                if (!signature.hasSignature()) { toast("O líder/preparador deve assinar no quadro antes de liberar"); return@button }
+                if (signatureBitmap == null) { toast("Abra a tela de assinatura e registre a assinatura do líder/preparador"); return@button }
             }
             val signaturePath = if (conditionalRelease.isChecked) {
-                val bmp = signature.exportBitmap()
-                store.saveBitmap(bmp, "assinatura_lider_maquina_${machineNo}_${System.currentTimeMillis()}.jpg")
+                store.saveBitmap(signatureBitmap!!, "assinatura_lider_maquina_${machineNo}_${System.currentTimeMillis()}.jpg")
             } else ""
             val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
             val reason = buildString {
@@ -533,7 +538,6 @@ class MainActivity : AppCompatActivity() {
                 append("\nProduto para teste: ").append(testProduct.selectedItem)
                 append("\nInspeção hora em hora: ").append(hourly.selectedItem)
                 append("\nChecklist: ").append(checklist.selectedItem)
-                append("\nOperador: ").append(operator.text)
                 append("\nMolde: ").append(mold.text)
                 if (checklistPhotoPath.isNotBlank()) append("\nFoto do defeito: ").append(checklistPhotoPath)
                 if (conditionalRelease.isChecked) {
@@ -544,12 +548,90 @@ class MainActivity : AppCompatActivity() {
                 } else append("\nLiberação condicional: NÃO")
             }
             val status = if (initialEvent == "Conforme") Status.OK else if (initialEvent == "Não Conforme") Status.BAD else Status.ATTENTION
-            store.addInspection(Inspection(now, code.text.toString(), product.text.toString(), status.name, reason, 0f, lot.text.toString(), "Máquina $machineNo", mold.text.toString(), ""))
+            store.addInspection(Inspection(now, "", "", status.name, reason, 0f, "", "Máquina $machineNo", mold.text.toString(), ""))
             machineStates[machineNo] = initialEvent
             toast("Checklist da Máquina $machineNo salvo no histórico")
             showProductionChecklist()
         }
         backToMachines()
+    }
+
+    private fun openSignatureScreen(onSaved: (Bitmap) -> Unit) {
+        val dialog = android.app.Dialog(this)
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(14))
+            setBackgroundColor(Color.rgb(245, 248, 252))
+        }
+        val title = TextView(this).apply {
+            text = "ASSINATURA DO RESPONSÁVEL\nAssine dentro do quadro branco"
+            textSize = 18f; setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.rgb(10, 24, 42)); gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(14))
+        }
+        page.addView(title, LinearLayout.LayoutParams(-1, -2))
+        val pad = SignaturePad(this).apply {
+            setBackgroundColor(Color.WHITE)
+            background = rounded(Color.WHITE, 8, Color.rgb(0, 123, 255))
+            contentDescription = "Área branca para assinatura manuscrita"
+        }
+        page.addView(pad, LinearLayout.LayoutParams(-1, 0, 1f).apply {
+            topMargin = dp(4); bottomMargin = dp(12)
+        })
+        val hint = TextView(this).apply {
+            text = "Use o dedo para assinar. A tela fica dedicada à assinatura até confirmar ou cancelar."
+            textSize = 13f; setTextColor(Color.rgb(45, 60, 78)); gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(10))
+        }
+        page.addView(hint, LinearLayout.LayoutParams(-1, -2))
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        fun actionButton(label: String, color: Int, click: () -> Unit) {
+            val b = Button(this).apply {
+                text = label; isAllCaps = false; setTextColor(Color.WHITE)
+                background = rounded(color, 10, color); setOnClickListener { click() }
+            }
+            actions.addView(b, LinearLayout.LayoutParams(0, dp(52), 1f).apply {
+                marginStart = dp(4); marginEnd = dp(4)
+            })
+        }
+        actionButton("Limpar", Color.rgb(85, 98, 115)) { pad.clear() }
+        actionButton("Cancelar", Color.rgb(160, 45, 52)) { dialog.dismiss() }
+        actionButton("Confirmar assinatura", Color.rgb(20, 125, 65)) {
+            if (!pad.hasSignature()) {
+                Toast.makeText(this, "Faça a assinatura antes de confirmar", Toast.LENGTH_SHORT).show()
+            } else {
+                onSaved(pad.exportBitmap())
+                dialog.dismiss()
+            }
+        }
+        page.addView(actions, LinearLayout.LayoutParams(-1, -2))
+        dialog.setContentView(page)
+        dialog.setCancelable(false)
+        dialog.setCanceledOnTouchOutside(false)
+        dialog.window?.let { window ->
+            window.setBackgroundDrawableResource(android.R.color.transparent)
+            window.setLayout(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            )
+        }
+        dialog.show()
+        dialog.window?.setLayout(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        )
+        dialog.window?.decorView?.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        )
     }
 
     private fun backToMachines() { button("← Voltar às 24 máquinas") { showProductionChecklist() } }
