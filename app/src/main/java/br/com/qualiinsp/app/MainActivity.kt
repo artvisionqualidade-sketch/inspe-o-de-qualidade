@@ -7,6 +7,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
+import android.view.MotionEvent
 import android.graphics.drawable.GradientDrawable
 import android.graphics.Typeface
 import android.view.View
@@ -331,89 +335,224 @@ class MainActivity : AppCompatActivity() {
 
     private val productionDefects = listOf(
         "Rebarba", "Chupagem", "Deformação", "Torpedo alto", "Fiapo", "Concavidade",
-        "Cor fora do padrão", "Falha na peça", "Filete da rosca amassado",
-        "Tampa pulando no pote (não trava ao rosquear)"
+        "Cor fora do padrão", "Falha no produto", "Filete da rosca do produto amassada",
+        "Tampa pulando no teste no pote (não trava ao rosquear o produto)"
     )
     private val productionEvents = listOf(
         "Conforme", "Não Conforme", "Máquina Parada", "Troca de Molde",
         "Manutenção em Geral", "PCP em Geral", "Teste de Molde", "Teste de Qualidade", "Aguardando Maquininha"
     )
+    private val machineStates = mutableMapOf<Int, String>()
+    private var checklistMachine = 1
     private var checklistPhoto: Bitmap? = null
     private var checklistPhotoPath: String = ""
     private var checklistPhotoPreview: ImageView? = null
     private var checklistEvent: String = "Conforme"
 
     private fun showProductionChecklist() {
-        root = base("QualiInsp • Checklist de produção")
-        val code = field("Código do produto")
-        val product = field("Produto")
-        val machine = field("Máquina / injetora")
-        val lot = field("Lote")
-        addText("Selecione a ocorrência e marque os defeitos encontrados. Para Não Conforme, a foto é obrigatória.", 14)
-        val eventSpinner = Spinner(this)
-        eventSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, productionEvents)
-        root.addView(eventSpinner, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
-        val checks = linkedMapOf<String, CheckBox>()
-        addText("Defeitos visuais", 16)
-        productionDefects.forEach { defect ->
-            val cb = CheckBox(this).apply { text = defect; setTextColor(Color.rgb(230,240,252)); textSize = 15f }
-            checks[defect] = cb
-            root.addView(cb)
-        }
-        val photoPreview = ImageView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(-1, dp(220))
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setBackgroundColor(Color.rgb(13,19,30))
-        }
-        checklistPhotoPreview = photoPreview
-        root.addView(photoPreview, LinearLayout.LayoutParams(-1, dp(220)).apply { bottomMargin = dp(8) })
-        button("📷 Fotografar não conformidade") {
-            checklistEvent = eventSpinner.selectedItem?.toString() ?: "Não Conforme"
-            captureAction = "checklist_photo"
-            requestCamera()
-        }
-        button("🖼️ Anexar foto da galeria") {
-            checklistEvent = eventSpinner.selectedItem?.toString() ?: "Não Conforme"
-            captureAction = "checklist_photo"
-            chooseGallery()
-        }
-        val releaseReason = field("Justificativa para liberar produto com avaria (se aplicável)")
-        val leader = field("Nome do líder/preparador que autoriza")
-        val operator = field("Nome do operador ciente")
-        val quality = field("Nome do responsável da qualidade ciente")
-        addText("Atenção: estes campos registram os nomes dos responsáveis; não são uma assinatura manuscrita digital. A liberação excepcional deve seguir o procedimento aprovado da empresa.", 13)
-        button("Salvar checklist e preparar e-mail") {
-            val event = eventSpinner.selectedItem?.toString() ?: "Conforme"
-            val selectedDefects = checks.filterValues { it.isChecked }.keys.toList()
-            val hasDefect = selectedDefects.isNotEmpty() || event == "Não Conforme"
-            if (hasDefect && checklistPhoto == null) { toast("Tire ou anexe uma foto obrigatória da não conformidade"); return@button }
-            if (hasDefect && (leader.text.isBlank() || operator.text.isBlank() || quality.text.isBlank())) {
-                toast("Preencha líder/preparador, operador e qualidade para registrar ciência da liberação"); return@button
+        // Recarrega o último estado salvo de cada máquina a partir do histórico persistente.
+        for (machineNo in 1..24) {
+            val last = store.inspections().lastOrNull { it.machine == "Máquina $machineNo" && it.reason.contains("Checklist de produção") }
+            if (last != null) {
+                val savedState = Regex("Estado: ([^\\n]+)").find(last.reason)?.groupValues?.getOrNull(1)
+                if (!savedState.isNullOrBlank()) machineStates[machineNo] = savedState
             }
-            if (hasDefect && releaseReason.text.isBlank()) { toast("Informe a justificativa da liberação com avaria"); return@button }
-            val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-            val reason = buildString {
-                append("Ocorrência: ").append(event)
-                if (selectedDefects.isNotEmpty()) append("\nDefeitos: ").append(selectedDefects.joinToString())
-                if (releaseReason.text.isNotBlank()) append("\nJustificativa: ").append(releaseReason.text)
-                if (leader.text.isNotBlank()) append("\nAutorizador: ").append(leader.text)
-                if (operator.text.isNotBlank()) append("\nOperador ciente: ").append(operator.text)
-                if (quality.text.isNotBlank()) append("\nQualidade ciente: ").append(quality.text)
-                if (checklistPhotoPath.isNotBlank()) append("\nFoto salva no armazenamento interno do app: ").append(checklistPhotoPath)
-            }
-            val status = if (hasDefect) Status.BAD else Status.OK
-            store.addInspection(Inspection(now, code.text.toString(), product.text.toString(), status.name, reason, 0f, lot.text.toString(), machine.text.toString(), "", ""))
-            val email = Intent(Intent.ACTION_SEND).apply {
-                type = "message/rfc822"
-                putExtra(Intent.EXTRA_SUBJECT, "QualiInsp - $event - ${product.text}")
-                putExtra(Intent.EXTRA_TEXT, "Data: $now\nProduto: ${product.text} (${code.text})\nMáquina: ${machine.text}\nLote: ${lot.text}\n\n$reason\n\nA foto foi salva no aplicativo; anexe-a manualmente ao e-mail, caso o cliente de e-mail não permita anexá-la automaticamente.")
-            }
-            try { startActivity(Intent.createChooser(email, "Enviar registro por e-mail")) } catch (_: Exception) { share("QualiInsp\n$now\n${product.text}\n$reason") }
-            toast("Checklist salvo no histórico")
-            showHistory()
         }
+        root = base("Checklist de produção • 24 máquinas")
+        addText("Selecione uma máquina para registrar seu estado. Cada máquina recebe exatamente um estado por registro. A não conformidade exige foto, defeito identificado e avaliação da liberação.", 14)
+        val counts = productionEvents.associateWith { event -> machineStates.values.count { it == event } }
+        addText("Resumo atual: ${machineStates.size}/24 máquinas preenchidas\n" + productionEvents.filter { (counts[it] ?: 0) > 0 }.joinToString("  •  ") { "$it: ${counts[it]}" }, 13)
+        for (machineNo in 1..24) {
+            val state = machineStates[machineNo] ?: "Pendente"
+            val statusColor = when (state) {
+                "Conforme" -> Color.rgb(25, 150, 80)
+                "Não Conforme" -> Color.rgb(190, 45, 55)
+                "Pendente" -> Color.rgb(70, 85, 105)
+                else -> Color.rgb(175, 125, 20)
+            }
+            val card = Button(this).apply {
+                text = "MÁQUINA $machineNo\n$state  •  ${if (state == "Pendente") "Toque para preencher" else "Toque para alterar/registrar"}"
+                isAllCaps = false; textSize = 15f; gravity = Gravity.CENTER_VERTICAL
+                setTextColor(Color.WHITE); background = rounded(Color.rgb(13,19,30), 14, statusColor)
+                setPadding(dp(16), dp(12), dp(12), dp(12)); stateListAnimator = null
+                setOnClickListener { showMachineChecklist(machineNo) }
+            }
+            root.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        }
+        button("Atualizar resumo") { showProductionChecklist() }
         back()
     }
+
+    private fun showMachineChecklist(machineNo: Int) {
+        checklistMachine = machineNo
+        checklistPhoto = null
+        checklistPhotoPath = ""
+        checklistPhotoPreview = null
+        checklistEvent = machineStates[machineNo] ?: "Conforme"
+        root = base("Checklist • Máquina $machineNo")
+        addText("Selecione somente UM estado para esta máquina. O estado escolhido fica destacado e substitui o anterior.", 14)
+        var selectedEvent = machineStates[machineNo] ?: ""
+        val eventButtons = mutableMapOf<String, Button>()
+        fun paintEventButtons() {
+            eventButtons.forEach { (name, b) ->
+                val selected = name == selectedEvent
+                val color = when (name) {
+                    "Conforme" -> Color.rgb(20, 125, 65)
+                    "Não Conforme" -> Color.rgb(165, 35, 45)
+                    else -> Color.rgb(18, 55, 90)
+                }
+                b.background = rounded(if (selected) color else Color.rgb(13,19,30), 12,
+                    if (selected) Color.rgb(0,158,255) else Color.rgb(35,70,105))
+            }
+        }
+        productionEvents.forEach { event ->
+            val b = Button(this).apply {
+                text = if (event == selectedEvent) "✓  $event" else event
+                isAllCaps = false; textSize = 14f; setTextColor(Color.WHITE)
+                background = rounded(Color.rgb(13,19,30), 12, Color.rgb(35,70,105))
+                setPadding(dp(12), dp(8), dp(12), dp(8)); stateListAnimator = null
+                setOnClickListener {
+                    selectedEvent = event
+                    checklistEvent = event
+                    eventButtons.forEach { (name, btn) -> btn.text = if (name == selectedEvent) "✓  $name" else name }
+                    paintEventButtons()
+                    // Reabrir a tela ao selecionar Não Conforme para mostrar os campos condicionais.
+                    showMachineChecklistWithEvent(machineNo, selectedEvent)
+                }
+            }
+            eventButtons[event] = b
+            root.addView(b, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(7) })
+        }
+        paintEventButtons()
+        addText("Identificação do registro", 16)
+        val code = field("Código / referência do produto")
+        val product = field("Nome do produto")
+        val lot = field("Lote")
+        val mold = field("Molde")
+        val operator = field("Operador do turno (nome)")
+        button("Salvar estado da máquina") {
+            if (selectedEvent.isBlank()) { toast("Selecione um estado para a Máquina $machineNo"); return@button }
+            if (selectedEvent == "Não Conforme") {
+                showMachineChecklistWithEvent(machineNo, selectedEvent)
+            } else {
+                machineStates[machineNo] = selectedEvent
+                val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+                val reason = "Checklist de produção — Máquina $machineNo\nEstado: $selectedEvent\nMolde: ${mold.text}\nOperador: ${operator.text}"
+                store.addInspection(Inspection(now, code.text.toString(), product.text.toString(), if (selectedEvent == "Conforme") Status.OK.name else Status.ATTENTION.name, reason, 0f, lot.text.toString(), "Máquina $machineNo", mold.text.toString(), ""))
+                toast("Estado da Máquina $machineNo salvo")
+                showProductionChecklist()
+            }
+        }
+        backToMachines()
+    }
+
+    private fun showMachineChecklistWithEvent(machineNo: Int, initialEvent: String) {
+        checklistMachine = machineNo
+        checklistEvent = initialEvent
+        checklistPhoto = null
+        checklistPhotoPath = ""
+        checklistPhotoPreview = null
+        root = base("Máquina $machineNo • ${if (initialEvent == "Não Conforme") "Não conformidade" else "Checklist"}")
+        addText("Estado da máquina: $initialEvent", 16)
+        val code = field("Código / referência do produto")
+        val product = field("Nome do produto")
+        val lot = field("Lote")
+        val mold = field("Molde")
+        val operator = field("Operador do turno")
+        val selectedDefects = mutableListOf<String>()
+        if (initialEvent == "Não Conforme") {
+            addText("1ª etapa — registre evidências. A foto do defeito é obrigatória.", 15)
+            addText("Marque todos os defeitos encontrados", 16)
+            productionDefects.forEach { defect ->
+                val cb = CheckBox(this).apply { text = defect; setTextColor(Color.rgb(230,240,252)); textSize = 14f }
+                root.addView(cb)
+                cb.setOnCheckedChangeListener { _, checked -> if (checked) { if (!selectedDefects.contains(defect)) selectedDefects.add(defect) } else selectedDefects.remove(defect) }
+            }
+            val photoPreview = ImageView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(-1, dp(210))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setBackgroundColor(Color.rgb(13,19,30))
+            }
+            checklistPhotoPreview = photoPreview
+            root.addView(photoPreview, LinearLayout.LayoutParams(-1, dp(210)).apply { bottomMargin = dp(8) })
+            button("📷 Fotografar defeito (obrigatório)") { captureAction = "checklist_photo"; requestCamera() }
+            button("🖼️ Anexar imagem da galeria") { captureAction = "checklist_photo"; chooseGallery() }
+        }
+        addText("2ª etapa — controles de produção e qualidade", 16)
+        fun choice(label: String, options: List<String>): Spinner {
+            addText(label, 14)
+            val sp = Spinner(this)
+            sp.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options)
+            root.addView(sp, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+            return sp
+        }
+        val ofRelease = choice("Existe liberação de máquina na OF?", listOf("Selecione", "SIM", "NÃO", "QUALIDADE"))
+        val piv = choice("Tem PIV na máquina?", listOf("Selecione", "SIM", "NÃO", "N/A"))
+        val standard = choice("Padrão disponível e atualizado?", listOf("Selecione", "SIM", "NÃO", "N/A"))
+        val testProduct = choice("Produto para teste disponível?", listOf("Selecione", "SIM", "NÃO", "N/A"))
+        val hourly = choice("Inspeção de hora em hora realizada?", listOf("Selecione", "SIM", "NÃO", "PENDENTE"))
+        val checklist = choice("Checklist da máquina preenchido?", listOf("Selecione", "SIM", "NÃO", "PENDENTE"))
+        val conditionalRelease = CheckBox(this).apply {
+            text = "Solicitar LIBERAÇÃO CONDICIONAL do produto com defeito pelo líder/preparador"
+            setTextColor(Color.rgb(255,205,90)); textSize = 15f
+        }
+        root.addView(conditionalRelease, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        val releaseReason = field("Justificativa / limite da liberação condicional")
+        val leader = field("Nome do líder ou preparador do turno")
+        addText("Assinatura manuscrita digital do líder/preparador — assinar no quadro abaixo. A assinatura é registrada como evidência do aplicativo; siga também o procedimento formal da empresa.", 13)
+        val signature = SignaturePad(this).apply {
+            layoutParams = LinearLayout.LayoutParams(-1, dp(170))
+            background = rounded(Color.WHITE, 10, Color.rgb(0,145,255))
+        }
+        root.addView(signature, LinearLayout.LayoutParams(-1, dp(170)).apply { bottomMargin = dp(8) })
+        button("Limpar assinatura") { signature.clear() }
+        button("Salvar checklist da Máquina $machineNo") {
+            if (initialEvent == "Não Conforme") {
+                if (selectedDefects.isEmpty()) { toast("Marque pelo menos um defeito encontrado"); return@button }
+                if (checklistPhoto == null || checklistPhotoPath.isBlank()) { toast("A foto do defeito é obrigatória"); return@button }
+            }
+            val controls = listOf(ofRelease, piv, standard, testProduct, hourly, checklist)
+            if (controls.any { it.selectedItemPosition == 0 }) { toast("Responda todas as perguntas da 2ª etapa"); return@button }
+            if (conditionalRelease.isChecked) {
+                if (initialEvent != "Não Conforme") { toast("Liberação condicional só se aplica a produto não conforme"); return@button }
+                if (leader.text.isBlank() || releaseReason.text.isBlank()) { toast("Informe o líder/preparador e a justificativa da liberação"); return@button }
+                if (!signature.hasSignature()) { toast("O líder/preparador deve assinar no quadro antes de liberar"); return@button }
+            }
+            val signaturePath = if (conditionalRelease.isChecked) {
+                val bmp = signature.exportBitmap()
+                store.saveBitmap(bmp, "assinatura_lider_maquina_${machineNo}_${System.currentTimeMillis()}.jpg")
+            } else ""
+            val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+            val reason = buildString {
+                append("Checklist de produção — Máquina ").append(machineNo)
+                append("\nEstado: ").append(initialEvent)
+                if (selectedDefects.isNotEmpty()) append("\nDefeitos: ").append(selectedDefects.joinToString())
+                append("\nOF liberada: ").append(ofRelease.selectedItem)
+                append("\nPIV na máquina: ").append(piv.selectedItem)
+                append("\nPadrão: ").append(standard.selectedItem)
+                append("\nProduto para teste: ").append(testProduct.selectedItem)
+                append("\nInspeção hora em hora: ").append(hourly.selectedItem)
+                append("\nChecklist: ").append(checklist.selectedItem)
+                append("\nOperador: ").append(operator.text)
+                append("\nMolde: ").append(mold.text)
+                if (checklistPhotoPath.isNotBlank()) append("\nFoto do defeito: ").append(checklistPhotoPath)
+                if (conditionalRelease.isChecked) {
+                    append("\nLIBERAÇÃO CONDICIONAL: SIM")
+                    append("\nAutorizador líder/preparador: ").append(leader.text)
+                    append("\nJustificativa: ").append(releaseReason.text)
+                    append("\nAssinatura digital salva: ").append(signaturePath)
+                } else append("\nLiberação condicional: NÃO")
+            }
+            val status = if (initialEvent == "Conforme") Status.OK else if (initialEvent == "Não Conforme") Status.BAD else Status.ATTENTION
+            store.addInspection(Inspection(now, code.text.toString(), product.text.toString(), status.name, reason, 0f, lot.text.toString(), "Máquina $machineNo", mold.text.toString(), ""))
+            machineStates[machineNo] = initialEvent
+            toast("Checklist da Máquina $machineNo salvo no histórico")
+            showProductionChecklist()
+        }
+        backToMachines()
+    }
+
+    private fun backToMachines() { button("← Voltar às 24 máquinas") { showProductionChecklist() } }
 
     private fun showHistory(){root=base("Histórico de inspeções");val xs=store.inspections().takeLast(100).reversed();if(xs.isEmpty())addText("Nenhuma inspeção registrada.");xs.forEach{addText("${it.date} | ${it.code} | ${it.status}\n${it.reason}\nProduto: ${it.name}\nLote: ${it.lot} • Máquina: ${it.machine}\n")};button("Compartilhar relatório"){share(store.export())};back()}
     
@@ -605,6 +744,31 @@ private fun showRules() {
 }
 
 enum class Status{WAITING,OK,BAD,ATTENTION}
+class SignaturePad(context: android.content.Context) : View(context) {
+    private val path = Path()
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 5f
+        strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+    private var drawn = false
+    override fun onDraw(canvas: Canvas) { super.onDraw(canvas); canvas.drawColor(Color.WHITE); canvas.drawPath(path, paint) }
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> { path.moveTo(event.x, event.y); drawn = true; invalidate(); return true }
+            MotionEvent.ACTION_MOVE -> { path.lineTo(event.x, event.y); invalidate(); return true }
+            MotionEvent.ACTION_UP -> { path.lineTo(event.x, event.y); invalidate(); performClick(); return true }
+        }
+        return true
+    }
+    override fun performClick(): Boolean { super.performClick(); return true }
+    fun clear() { path.reset(); drawn = false; invalidate() }
+    fun hasSignature(): Boolean = drawn
+    fun exportBitmap(): Bitmap {
+        val bmp = Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp); canvas.drawColor(Color.WHITE); canvas.drawPath(path, paint); return bmp
+    }
+}
+
 data class Product(val id:String,val code:String,val name:String,val color:String,val defects:MutableList<Defect>,val okSamples:MutableList<List<Float>>,var standardFile:String="",var standardFeatures:List<Float> = emptyList())
 data class Defect(val id:String,var name:String,var rule:String,var critical:Boolean,var threshold:Float,val samples:MutableList<List<Float>>)
 data class Finding(val id:String,val name:String,val confidence:Float,val threshold:Float)

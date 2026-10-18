@@ -17,3 +17,12 @@ O repositório não inclui `gradlew`; o workflow usa Gradle instalado no runner.
 
 ## Importante sobre precisão
 A comparação visual atual é heurística e experimental (histogramas de cor, luminosidade e bordas), não uma rede neural industrial treinada. Não mede dimensões físicas reais e não substitui instrumentos, gabaritos ou validação de processo. A câmera do celular pode apoiar inspeção visual, mas resultados devem ser validados com amostras representativas e condições de iluminação controladas antes de qualquer decisão industrial.
+
+
+## Checklist de produção 3.1
+- Cadastro de estado individual para máquinas 1 a 24.
+- Um estado selecionado por máquina: Conforme, Não Conforme, Máquina Parada, Troca de Molde, Manutenção em Geral, PCP em Geral, Teste de Molde, Teste de Qualidade ou Aguardando Maquininha.
+- Não Conforme exige foto e seleção de defeitos.
+- Segunda etapa registra liberação na OF, PIV, padrão, produto para teste, inspeção horária e checklist.
+- Liberação condicional exige nome do líder/preparador, justificativa e assinatura manuscrita desenhada na tela.
+- Registros são adicionados ao histórico local do aplicativo.
